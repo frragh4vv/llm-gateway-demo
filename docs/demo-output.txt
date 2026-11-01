@@ -1,0 +1,27 @@
+Waiting for gateway...
+
+1) Ops creates teams and virtual keys
+  removed 2 team(s) from a previous run
+  team platform-eng  models=['gpt-4o-mini', 'gpt-4o', 'claude-haiku'] budget=$1.0 key=sk-f8L..._Z9g
+  team support-bot   models=['claude-haiku'] budget=$0.001 key=sk-Dxb...A40w
+
+2) Model access: support-bot asks for gpt-4o (not approved)
+  -> HTTP 403 (denied as expected)
+
+3) Caching: platform-eng sends the same prompt twice
+  first 0.71s, second 0.09s (x7.9 faster, served from cache)
+
+4) Fallback: OpenAI goes down, platform-eng keeps calling gpt-4o-mini
+  -> HTTP 200, answered by: anthropic mock / claude-3-5-haiku
+
+5) Budget: support-bot sends traffic until its $0.001 budget runs out
+  request 1: ok
+  request 2: ok
+  request 3: ok
+  request 4: ok
+  request 5: ok
+  request 6: HTTP 422 budget exceeded -> blocked
+
+Done. Open the dashboard to see spend, budgets, failures and recent requests.
+
+Summary: all scenarios passed

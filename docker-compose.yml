@@ -1,0 +1,71 @@
+# docker compose up -d   then   python scripts/demo.py
+# All images pinned by digest. Ports bound to 127.0.0.1 only.
+name: llm-gateway-demo
+
+x-mock-endpoints: &mock-endpoints
+  MOCK_OPENAI_BASE: http://mock:8001/openai/v1
+  MOCK_ANTHROPIC_BASE: http://mock:8001/anthropic/v1
+
+services:
+  postgres:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: litellm
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  mock:
+    build: { context: ., dockerfile: docker/Dockerfile.app }
+    command: ["uvicorn", "mock_provider.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      MOCK_FAIL_PROVIDERS: ${MOCK_FAIL_PROVIDERS:-}
+    ports: ["127.0.0.1:8001:8001"]
+
+  litellm:
+    # v1.106.5: see README "Why litellm 1.106.5". Never use :latest (it pointed at the
+    # malicious v1.107.0 for ~2.5h on 2026-10-21).
+    image: ghcr.io/berriai/litellm:v1.106.5@sha256:7d6ae6c8d73d1b6aea4cb75d07c4a8a953f0809b0764522b8eab693734c5e905
+    command: ["--config", "/app/gateway/config.yaml", "--port", "4000"]
+    env_file: .env
+    environment:
+      <<: *mock-endpoints
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REDIS_HOST: redis
+      REQUEST_LOG_PATH: /app/logs/requests.jsonl
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    volumes:
+      - ./gateway:/app/gateway:ro
+      - logs:/app/logs
+    ports: ["127.0.0.1:4000:4000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      mock: { condition: service_started }
+
+  dashboard:
+    build: { context: ., dockerfile: docker/Dockerfile.app }
+    command: ["streamlit", "run", "dashboard/app.py", "--server.address", "0.0.0.0",
+              "--server.port", "8501", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+    environment:
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      REQUEST_LOG_PATH: /app/logs/requests.jsonl
+    volumes: [logs:/app/logs:ro]
+    ports: ["127.0.0.1:8501:8501"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  logs:

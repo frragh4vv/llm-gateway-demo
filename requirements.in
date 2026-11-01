@@ -1,0 +1,14 @@
+# Direct dependencies. Lock with:
+#   uv pip compile requirements.in --universal --generate-hashes --python-version 3.11 -o requirements.lock
+# litellm is pinned exactly; see README "Why litellm 1.106.5".
+litellm[proxy]==1.106.5
+prisma==0.15.0
+pgserver==0.1.4
+fastapi
+uvicorn
+httpx
+streamlit
+pandas
+psycopg[binary]
+python-dotenv
+pytest

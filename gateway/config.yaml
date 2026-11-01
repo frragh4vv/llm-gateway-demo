@@ -1,0 +1,78 @@
+# LiteLLM proxy config used by docker compose (Redis cache).
+# config.local.yaml is the same file with an in-memory cache; tests keep them in sync.
+#
+# Devs only ever see a virtual key (sk-...). Provider keys live here, read from env.
+
+model_list:
+  # --- Mock providers (offline demo). Prices mirror the real models so spend looks realistic.
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_base: os.environ/MOCK_OPENAI_BASE
+      api_key: os.environ/MOCK_PROVIDER_KEY
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000006
+    model_info:
+      id: mock-openai-gpt-4o-mini
+      provider_label: openai (mock)
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_base: os.environ/MOCK_OPENAI_BASE
+      api_key: os.environ/MOCK_PROVIDER_KEY
+      input_cost_per_token: 0.0000025
+      output_cost_per_token: 0.00001
+    model_info:
+      id: mock-openai-gpt-4o
+      provider_label: openai (mock)
+  - model_name: claude-haiku
+    litellm_params:
+      model: openai/claude-3-5-haiku
+      api_base: os.environ/MOCK_ANTHROPIC_BASE
+      api_key: os.environ/MOCK_PROVIDER_KEY
+      input_cost_per_token: 0.0000008
+      output_cost_per_token: 0.000004
+    model_info:
+      id: mock-anthropic-claude-haiku
+      provider_label: anthropic (mock)
+
+  # --- Real providers. Uncomment and set the key in .env to route real traffic.
+  # - model_name: real-gpt-4o-mini
+  #   litellm_params:
+  #     model: openai/gpt-4o-mini
+  #     api_key: os.environ/OPENAI_API_KEY
+  #   model_info:
+  #     provider_label: openai
+  # - model_name: real-claude-haiku
+  #   litellm_params:
+  #     model: anthropic/claude-3-5-haiku-latest
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #   model_info:
+  #     provider_label: anthropic
+
+router_settings:
+  # If an OpenAI model fails, retry the same request on Anthropic.
+  fallbacks:
+    - gpt-4o-mini: ["claude-haiku"]
+    - gpt-4o: ["claude-haiku"]
+  num_retries: 0          # fail over immediately; retries would just hit the broken provider again
+  allowed_fails: 3
+  cooldown_time: 5        # short so the demo recovers quickly after the failure switch is off
+
+litellm_settings:
+  request_timeout: 30
+  drop_params: true
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: 6379
+    ttl: 600
+  callbacks: request_logger.request_logger
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: false
+  store_prompts_in_spend_logs: false   # metadata only; flip on if the client wants prompt audits
+  proxy_batch_write_at: 2              # flush spend to Postgres every 2s so the dashboard is live

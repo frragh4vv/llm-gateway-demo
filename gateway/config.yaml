@@ -36,7 +36,39 @@ model_list:
       id: mock-anthropic-claude-haiku
       provider_label: anthropic (mock)
 
-  # --- Real providers. Uncomment and set the key in .env to route real traffic.
+  # --- Real free-tier providers. Keys come from .env; a model whose key is unset just errors.
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+    model_info:
+      id: real-gemini-flash
+      provider_label: google gemini
+  - model_name: groq-gpt-oss
+    litellm_params:
+      model: groq/openai/gpt-oss-20b
+      api_key: os.environ/GROQ_API_KEY
+    model_info:
+      id: real-groq-gpt-oss
+      provider_label: groq
+  # A model the provider has retired (this really happened to Groq's llama-3.3-70b while
+  # building the demo). Every call fails upstream, so it shows fallback with real providers.
+  - model_name: gemini-retired
+    litellm_params:
+      model: gemini/gemini-1.0-pro-retired
+      api_key: os.environ/GEMINI_API_KEY
+    model_info:
+      id: real-gemini-retired
+      provider_label: google gemini
+  - model_name: mistral-7b
+    litellm_params:
+      model: mistral/open-mistral-7b
+      api_key: os.environ/MISTRAL_API_KEY
+    model_info:
+      id: real-mistral-7b
+      provider_label: mistral
+
+  # --- Paid providers. Uncomment and set the key in .env to route real traffic.
   # - model_name: real-gpt-4o-mini
   #   litellm_params:
   #     model: openai/gpt-4o-mini
@@ -55,6 +87,9 @@ router_settings:
   fallbacks:
     - gpt-4o-mini: ["claude-haiku"]
     - gpt-4o: ["claude-haiku"]
+    - gemini-flash: ["groq-gpt-oss", "mistral-7b"]
+    - groq-gpt-oss: ["mistral-7b"]
+    - gemini-retired: ["groq-gpt-oss", "mistral-7b"]
   num_retries: 0          # fail over immediately; retries would just hit the broken provider again
   allowed_fails: 3
   cooldown_time: 5        # short so the demo recovers quickly after the failure switch is off

@@ -90,29 +90,38 @@ build time), Prisma downloads its engines, and LiteLLM migrates the database.
 URLs: gateway `http://localhost:4000`, dashboard `http://localhost:8501`,
 LiteLLM UI `http://localhost:4000/ui`, mock provider `http://localhost:8001/health`.
 
-### Using real providers
+### Using real providers (free tier)
 
-Set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in `.env`, uncomment the `real-*` models
-in `gateway/config*.yaml`, restart, and add those model names to a team's `models`.
-The keys stay on the gateway; dev teams still only get virtual keys.
+The config also has three real, free-tier models. Their keys are read from `.env` only:
+
+| Model name | Provider model | Key |
+|---|---|---|
+| `gemini-flash` | `gemini/gemini-2.5-flash` | `GEMINI_API_KEY` |
+| `groq-gpt-oss` | `groq/openai/gpt-oss-20b` | `GROQ_API_KEY` |
+| `mistral-7b` | `mistral/open-mistral-7b` | `MISTRAL_API_KEY` |
+| `gemini-retired` | a Gemini model ID Google no longer serves (always fails) | `GEMINI_API_KEY` |
+
+The fallback chain is `gemini-flash` then `groq-gpt-oss` then `mistral-7b`. `gemini-retired` falls back to Groq. This is the real-world case the gateway is for. While this demo was being built, Groq retired `llama-3.3-70b-versatile`, and the gateway silently served those calls from Mistral instead.
+
+Set the keys in `.env`, restart, and run `python scripts/demo.py --real`. Dev teams still get only virtual keys. To use OpenAI or Anthropic, uncomment the paid models in `gateway/config*.yaml`.
 
 ## Demo output
 
-Real output from `scripts/demo.py` against the local stack (keys masked by the script):
+Real output from `python scripts/demo.py --real` against the local stack. Keys are masked by the script. Steps 6-7 called real Gemini, Groq and Mistral free-tier APIs:
 
 ```text
 Waiting for gateway...
 
 1) Ops creates teams and virtual keys
   removed 2 team(s) from a previous run
-  team platform-eng  models=['gpt-4o-mini', 'gpt-4o', 'claude-haiku'] budget=$1.0 key=sk-f8L..._Z9g
-  team support-bot   models=['claude-haiku'] budget=$0.001 key=sk-Dxb...A40w
+  team platform-eng  models=['gpt-4o-mini', 'gpt-4o', 'claude-haiku', 'gemini-flash', 'groq-gpt-oss', 'mistral-7b', 'gemini-retired'] budget=$1.0 key=sk-aY_...aGaw
+  team support-bot   models=['claude-haiku'] budget=$0.001 key=sk-VUB...i88w
 
 2) Model access: support-bot asks for gpt-4o (not approved)
   -> HTTP 403 (denied as expected)
 
 3) Caching: platform-eng sends the same prompt twice
-  first 0.71s, second 0.09s (x7.9 faster, served from cache)
+  first 0.66s, second 0.04s (x17.4 faster, served from cache)
 
 4) Fallback: OpenAI goes down, platform-eng keeps calling gpt-4o-mini
   -> HTTP 200, answered by: anthropic mock / claude-3-5-haiku
@@ -124,6 +133,17 @@ Waiting for gateway...
   request 4: ok
   request 5: ok
   request 6: HTTP 422 budget exceeded -> blocked
+
+6) Real providers through the same virtual key (free-tier keys live only on the gateway)
+  gemini-flash  -> served by real-gemini-flash in 10.1s, cost $0.001994
+                   "An LLM gateway centralizes control for security, cost optimization, performance, and multi-provider management, enhancing operational effici"
+  groq-gpt-oss  -> served by real-groq-gpt-oss in 0.5s, cost $0.000024
+                   "Putting an LLM gateway in front of provider APIs centralizes, secures, and streamlines access, allowing consistent request handling, unified"
+  mistral-7b    -> served by real-mistral-7b in 1.0s, cost $0.000012
+                   "An **LLM gateway** sits in front of provider APIs to **standardize, optimize, and secure** interactions—aggregating, caching, routing, and t"
+
+7) Real fallback: call gemini-retired, a model Google no longer serves
+  Gemini returned an error -> answered by real-groq-gpt-oss
 
 Done. Open the dashboard to see spend, budgets, failures and recent requests.
 

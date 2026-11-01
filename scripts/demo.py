@@ -7,8 +7,10 @@ What it shows, in order:
   4. Identical requests are served from cache.
   5. A provider outage is absorbed by automatic fallback.
   6. A team that burns its budget gets rejected.
+  7. (--real) The same virtual key reaches real free-tier providers, with a real fallback chain.
 
 Usage:  python scripts/demo.py            (reads .env for LITELLM_MASTER_KEY)
+        python scripts/demo.py --real     (also call Gemini / Groq / Mistral; needs their keys in .env)
         python scripts/demo.py --keep     (do not delete demo teams from earlier runs)
 """
 
@@ -37,8 +39,13 @@ class TeamSpec:
     key_alias: str
 
 
+# Real free-tier models (gateway/config*.yaml). Fallback chain: gemini-flash -> groq-gpt-oss -> mistral-7b.
+REAL_MODELS = ["gemini-flash", "groq-gpt-oss", "mistral-7b"]
+RETIRED_MODEL = "gemini-retired"  # always fails upstream; falls back to groq-gpt-oss
+
 TEAMS = [
-    TeamSpec("platform-eng", ["gpt-4o-mini", "gpt-4o", "claude-haiku"], 1.00, "platform-eng-dev"),
+    TeamSpec("platform-eng", ["gpt-4o-mini", "gpt-4o", "claude-haiku"] + REAL_MODELS + [RETIRED_MODEL],
+             1.00, "platform-eng-dev"),
     # Tiny budget so the demo can show a team being blocked after a few calls.
     TeamSpec("support-bot", ["claude-haiku"], 0.001, "support-bot-prod"),
 ]
@@ -68,6 +75,11 @@ def served_by(headers: httpx.Headers | dict, body: dict) -> str:
     return str(body.get("model", "unknown"))
 
 
+def deployment(r: httpx.Response) -> str:
+    """The gateway deployment that answered (model_info.id in the config)."""
+    return r.headers.get("x-litellm-model-id") or str(r.json().get("model", "unknown"))
+
+
 def mask(key: str) -> str:
     return f"{key[:6]}...{key[-4:]}" if len(key) > 12 else "***"
 
@@ -79,6 +91,8 @@ class DemoResult:
     cache_speedup: float | None = None
     fallback_served_by: str | None = None
     budget_blocked_after: int | None = None
+    real_calls: dict[str, str] = field(default_factory=dict)
+    real_fallback_served_by: str | None = None
 
 
 class GatewayDemo:
@@ -133,12 +147,40 @@ class GatewayDemo:
         self.mock.post("/admin/failures", json={provider: enabled}).raise_for_status()
 
     # ---------- dev (virtual key) ----------
-    def chat(self, key: str, model: str, prompt: str) -> httpx.Response:
+    def chat(self, key: str, model: str, prompt: str, **extra) -> httpx.Response:
         return self.gw.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                            json={"model": model, "messages": [{"role": "user", "content": prompt}]})
+                            json={"model": model, "messages": [{"role": "user", "content": prompt}], **extra})
 
     # ---------- the story ----------
-    def run(self, keep: bool = False) -> DemoResult:
+    def run_real(self, key: str, res: DemoResult) -> None:
+        self.log("\n6) Real providers through the same virtual key (free-tier keys live only on the gateway)")
+        question = "In one sentence: why put an LLM gateway in front of provider APIs?"
+        for model in REAL_MODELS:
+            t0 = time.perf_counter()
+            # Gemini 2.5 and gpt-oss spend part of max_tokens on reasoning: keep it low and the
+            # budget generous. drop_params strips reasoning_effort for models without it.
+            r = self.chat(key, model, f"{question} ({uuid.uuid4().hex[:4]})",
+                          max_tokens=800, reasoning_effort="low")
+            dt = time.perf_counter() - t0
+            if r.status_code != 200:
+                res.real_calls[model] = f"HTTP {r.status_code}"
+                self.log(f"  {model:<13} -> HTTP {r.status_code} {_short(r)}")
+                continue
+            body = r.json()
+            text = (body["choices"][0]["message"]["content"] or "").strip().replace("\n", " ")
+            cost = float(r.headers.get("x-litellm-response-cost") or 0)
+            res.real_calls[model] = deployment(r)
+            self.log(f"  {model:<13} -> served by {deployment(r)} in {dt:.1f}s, cost ${cost:.6f}")
+            self.log(f"                   \"{text[:140]}\"")
+        self.log(f"\n7) Real fallback: call {RETIRED_MODEL}, a model Google no longer serves")
+        r = self.chat(key, RETIRED_MODEL, f"Say hi in five words. {uuid.uuid4().hex[:4]}", max_tokens=400)
+        if r.status_code == 200:
+            res.real_fallback_served_by = deployment(r)
+            self.log(f"  Gemini returned an error -> answered by {res.real_fallback_served_by}")
+        else:
+            self.log(f"  -> HTTP {r.status_code} {_short(r)}")
+
+    def run(self, keep: bool = False, real: bool = False) -> DemoResult:
         res = DemoResult()
         self.log("Waiting for gateway...")
         self.wait_until_ready()
@@ -194,6 +236,9 @@ class GatewayDemo:
         else:
             self.log("  budget never tripped (check proxy_batch_write_at / team budget)")
 
+        if real:
+            self.run_real(platform, res)
+
         self.log("\nDone. Open the dashboard to see spend, budgets, failures and recent requests.")
         return res
 
@@ -210,19 +255,23 @@ def _short(r: httpx.Response) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Real model replies contain characters a Windows cp1252 console cannot print.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if load_dotenv:
         load_dotenv()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gateway", default=os.getenv("GATEWAY_URL", "http://localhost:4000"))
     ap.add_argument("--mock", default=os.getenv("MOCK_ADMIN_URL", "http://localhost:8001"))
     ap.add_argument("--keep", action="store_true", help="keep demo teams from earlier runs")
+    ap.add_argument("--real", action="store_true", help="also call the real free-tier providers")
     args = ap.parse_args(argv)
     master_key = os.getenv("LITELLM_MASTER_KEY")
     if not master_key:
         print("LITELLM_MASTER_KEY is not set (copy .env.example to .env)", file=sys.stderr)
         return 2
     with httpx.Client(base_url=args.gateway, timeout=120) as gw, httpx.Client(base_url=args.mock, timeout=10) as mock:
-        res = GatewayDemo(gw, mock, master_key).run(keep=args.keep)
+        res = GatewayDemo(gw, mock, master_key).run(keep=args.keep, real=args.real)
     ok = res.denied and res.fallback_served_by and "anthropic" in res.fallback_served_by \
         and res.budget_blocked_after is not None
     print("\nSummary:", "all scenarios passed" if ok else "some scenarios did not behave as expected")

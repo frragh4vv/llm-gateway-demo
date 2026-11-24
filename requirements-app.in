@@ -1,8 +1,7 @@
-# Mock provider + dashboard image (docker/Dockerfile.app). No litellm here.
+# Mock provider + ops console image (docker/Dockerfile.app). No litellm here.
 fastapi
 uvicorn
 httpx
-streamlit
 pandas
 psycopg[binary]
 pyyaml

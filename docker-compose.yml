@@ -34,9 +34,9 @@ services:
     ports: ["127.0.0.1:8001:8001"]
 
   litellm:
-    # v1.106.5: see README "Why litellm 1.106.5". Never use :latest (it pointed at the
+    # v1.108.13: see README "Why litellm 1.108.13". Never use :latest (it pointed at the
     # malicious v1.107.0 for ~2.5h on 2026-10-21).
-    image: ghcr.io/berriai/litellm:v1.106.5@sha256:7d6ae6c8d73d1b6aea4cb75d07c4a8a953f0809b0764522b8eab693734c5e905
+    image: ghcr.io/berriai/litellm:v1.108.13@sha256:65a9631f79329779a3371f4bdf185c3a4a93653254743b8722c5cbd9b9dd8a65
     command: ["--config", "/app/gateway/config.yaml", "--port", "4000"]
     env_file: .env
     environment:
@@ -54,17 +54,21 @@ services:
       redis: { condition: service_healthy }
       mock: { condition: service_started }
 
-  dashboard:
+  console:
     build: { context: ., dockerfile: docker/Dockerfile.app }
-    command: ["streamlit", "run", "dashboard/app.py", "--server.address", "0.0.0.0",
-              "--server.port", "8501", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+    command: ["uvicorn", "console.server:app", "--host", "0.0.0.0", "--port", "8080"]
     environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-123}
+      GATEWAY_URL: http://litellm:4000
+      MOCK_ADMIN_URL: http://mock:8001
       DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@postgres:5432/litellm
       REQUEST_LOG_PATH: /app/logs/requests.jsonl
     volumes: [logs:/app/logs:ro]
-    ports: ["127.0.0.1:8501:8501"]
+    ports: ["127.0.0.1:8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }
+      litellm: { condition: service_started }
 
 volumes:
   pgdata:

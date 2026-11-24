@@ -1,4 +1,4 @@
-"""Pure data shaping for the ops dashboard (no Streamlit, no DB), so it is testable."""
+"""Pure data shaping for the ops console (no web framework, no DB), so it is testable."""
 
 from __future__ import annotations
 
@@ -111,3 +111,79 @@ def cache_hit_rate(log: pd.DataFrame) -> float | None:
     if ok.empty:
         return None
     return round(float(ok["cache_hit"].fillna(False).astype(bool).mean() * 100), 1)
+
+
+SPEND_SQL = """
+SELECT request_id, "startTime" AS start_time, model, model_group, model_id, spend,
+       total_tokens, cache_hit, team_id, status,
+       metadata->>'user_api_key_alias' AS key_alias
+FROM "LiteLLM_SpendLogs"
+ORDER BY "startTime" DESC
+LIMIT 5000
+"""
+
+
+def requests_per_minute(spend_logs: pd.DataFrame, minutes: int = 60, now: pd.Timestamp | None = None) -> list[dict]:
+    """Request count per minute for the last `minutes`, zero-filled (for the sparkline)."""
+    now = (now or pd.Timestamp.now(tz="UTC")).floor("min")
+    idx = pd.date_range(end=now, periods=minutes, freq="min")
+    if spend_logs.empty:
+        counts = pd.Series(0, index=idx)
+    else:
+        ts = pd.to_datetime(spend_logs["start_time"], utc=True, errors="coerce").dt.floor("min")
+        counts = ts.value_counts().reindex(idx, fill_value=0)
+    return [{"t": t.isoformat(), "n": int(n)} for t, n in counts.items()]
+
+
+def records(df: pd.DataFrame) -> list[dict]:
+    """DataFrame -> JSON-safe list of dicts (NaN/NaT -> None, timestamps -> ISO)."""
+    if df.empty:
+        return []
+    out = df.copy()
+    for col in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[col]):
+            # LiteLLM stores naive UTC timestamps; tag them so browsers do not read them as local time.
+            if out[col].dt.tz is None:
+                out[col] = out[col].dt.tz_localize("UTC")
+            out[col] = out[col].map(lambda v: v.isoformat() if pd.notna(v) else None)
+    out = out.astype(object).where(pd.notna(out), None)
+    return out.to_dict("records")
+
+
+def overview_payload(teams: pd.DataFrame, spend: pd.DataFrame, log: pd.DataFrame) -> dict:
+    """Everything the console's overview page shows, in one JSON object."""
+    teams = teams.copy()
+    for col in ("spend", "max_budget"):
+        teams[col] = pd.to_numeric(teams[col], errors="coerce")
+    spend = spend.copy()
+    spend["spend"] = pd.to_numeric(spend["spend"], errors="coerce").fillna(0.0)
+    budgets = team_budgets(teams) if not teams.empty else pd.DataFrame()
+    names = dict(zip(teams["team_id"], teams["team_alias"])) if not teams.empty else {}
+    recent = spend.head(40).assign(
+        team=lambda d: d["team_id"].map(names),
+        cache_hit=lambda d: d["cache_hit"].astype(str).str.lower().eq("true"),
+    )
+    errors = log[log["status"] != "success"].tail(15).iloc[::-1] if not log.empty else log
+    upstream = log[log["status"].isin(["success", "failure"])] if not log.empty else log
+    return {
+        "kpis": {
+            "total_spend": round(float(spend["spend"].sum()), 6),
+            "requests": int(len(spend)),
+            "teams": int(len(teams)),
+            "teams_over_budget": int(budgets["blocked"].sum()) if not budgets.empty else 0,
+            "cache_hit_rate": cache_hit_rate(log),
+            "upstream_failure_rate": round(float(upstream["status"].eq("failure").mean() * 100), 1)
+            if not upstream.empty else None,
+            "blocked_requests": int(log["status"].eq("rejected").sum()) if not log.empty else 0,
+        },
+        "budgets": records(budgets),
+        "by_model": records(cost_by_model(spend)),
+        "by_team": records(spend_by_team(spend, teams)),
+        "providers": records(provider_failure_rates(log)),
+        "rejections": records(gateway_rejections(log)),
+        "timeline": requests_per_minute(spend),
+        "recent": records(recent[["start_time", "team", "key_alias", "model_group", "model_id",
+                                  "status", "spend", "total_tokens", "cache_hit"]]),
+        "errors": records(errors[["ts", "team", "model_group", "provider", "status", "error"]])
+        if not errors.empty else [],
+    }

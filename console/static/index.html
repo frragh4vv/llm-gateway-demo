@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gateway Ops</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23171719'/%3E%3Cpath d='M7 11h8l4 5-4 5H7M19 16h7' fill='none' stroke='%234a8ad6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <!-- Sign-in -->
+  <section id="login" class="login" hidden>
+    <div class="login-side" aria-hidden="true">
+      <svg class="login-route" viewBox="0 0 560 330" role="presentation">
+        <g class="route-lines">
+          <path d="M40 80 H200 L260 180" /><path d="M40 180 H260" /><path d="M40 280 H200 L260 180" />
+          <path d="M260 180 H380 L460 110" class="live" /><path d="M260 180 H380 L460 250" class="spare" />
+        </g>
+        <g class="route-nodes">
+          <circle cx="40" cy="80" r="5"/><circle cx="40" cy="180" r="5"/><circle cx="40" cy="280" r="5"/>
+          <rect x="236" y="156" width="48" height="48" rx="6"/>
+          <circle cx="460" cy="110" r="6" class="live"/><circle cx="460" cy="250" r="6"/>
+        </g>
+        <g class="route-labels">
+          <text x="40" y="64">platform-eng</text><text x="40" y="164">support-bot</text><text x="40" y="264">search-squad</text>
+          <text x="260" y="228" text-anchor="middle">gateway</text>
+          <text x="460" y="94" text-anchor="middle">openai</text><text x="460" y="280" text-anchor="middle">anthropic · fallback</text>
+        </g>
+      </svg>
+      <p class="login-caption">Three teams, one gateway, two providers. Every request is checked for model access and budget, cached, logged, and rerouted when a provider goes down.</p>
+    </div>
+    <form id="login-form" class="login-card">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Gateway Ops <span class="pill neutral">Demo</span></div>
+      <h2 class="login-title">Sign in to the ops console</h2>
+      <p class="muted">This is a demo build with mock providers and sample traffic. The master key stays on the server; the browser only gets a session cookie.</p>
+      <label class="field">
+        <span>Password</span>
+        <input id="login-key" type="password" autocomplete="current-password" placeholder="123" required aria-describedby="login-hint">
+      </label>
+      <div class="demo-hint" id="login-hint">
+        <span>Demo password <code>123</code></span>
+        <button type="button" class="btn btn-sm" id="login-fill">Fill it in</button>
+      </div>
+      <button class="btn btn-primary btn-wide" type="submit">Sign in</button>
+      <p id="login-error" class="form-error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="shell" hidden>
+    <nav class="rail" aria-label="Main">
+      <a class="rail-brand" href="#/overview" aria-label="Gateway Ops home"><span class="brand-mark" aria-hidden="true"></span></a>
+      <div class="nav">
+        <a href="#/overview" data-route="overview" aria-label="Overview" data-tip="Overview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z"/></svg><span>Overview</span></a>
+        <a href="#/teams" data-route="teams" aria-label="Teams" data-tip="Teams">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5M16 5.2a3 3 0 0 1 0 5.6M18 14.4c1.6.7 2.6 2.2 3 4.6"/></svg><span>Teams</span></a>
+        <a href="#/keys" data-route="keys" aria-label="Virtual keys" data-tip="Virtual keys">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l3 3M14 9l2 2"/></svg><span>Keys</span></a>
+        <a href="#/providers" data-route="providers" aria-label="Providers and models" data-tip="Providers &amp; models">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/></svg><span>Models</span></a>
+        <a href="#/playground" data-route="playground" aria-label="Playground" data-tip="Playground">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4z"/><path d="M9 9h6M9 12h3"/></svg><span>Try it</span></a>
+        <a href="#/logs" data-route="logs" aria-label="Request log" data-tip="Request log">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l3 3v13H6z"/><path d="M9 11h6M9 14h6M9 17h4"/></svg><span>Log</span></a>
+      </div>
+      <div class="rail-foot">
+        <div class="lights" id="lights" aria-label="System status"></div>
+        <button class="rail-btn" id="logout" aria-label="Sign out" data-tip="Sign out">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/></svg></button>
+      </div>
+    </nav>
+    <main class="main">
+      <header class="page-head">
+        <div class="page-title">
+          <div class="title-line"><h1 id="page-title"></h1><span class="pill neutral" id="page-pill">Demo</span></div>
+          <p class="page-sub" id="page-sub"></p>
+        </div>
+        <div class="page-actions" id="page-actions"></div>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <!-- Drawer for forms -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" aria-labelledby="drawer-title">
+    <div class="drawer-head">
+      <h2 id="drawer-title"></h2>
+      <button class="icon-btn" id="drawer-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div id="drawer-body"></div>
+  </aside>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

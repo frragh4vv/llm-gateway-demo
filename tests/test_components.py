@@ -8,7 +8,7 @@ import pandas as pd
 import yaml
 from fastapi.testclient import TestClient
 
-from dashboard import metrics
+from console import metrics
 from gateway import request_logger
 from mock_provider import app as mock
 
@@ -156,7 +156,7 @@ def test_fallback_targets_exist():
 
 def test_litellm_pinned_to_reviewed_version():
     lock = (ROOT / "requirements.lock").read_text()
-    assert "litellm==1.106.5 \\" in lock
+    assert "litellm==1.108.13 \\" in lock
     assert "litellm==1.107.0" not in lock
     compose = (ROOT / "docker-compose.yml").read_text()
-    assert "ghcr.io/berriai/litellm:v1.106.5@sha256:" in compose
+    assert "ghcr.io/berriai/litellm:v1.108.13@sha256:" in compose

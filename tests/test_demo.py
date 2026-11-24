@@ -12,7 +12,7 @@ def test_is_budget_error_matches_litellm_message():
     body = {"error": {"message": "Budget has been exceeded! Team=abc Current cost: 0.0012, Max budget: 0.001",
                       "type": "budget_exceeded"}}
     assert demo.is_budget_error(400, body)
-    assert demo.is_budget_error(422, body)  # what litellm 1.106.5 actually returns
+    assert demo.is_budget_error(422, body)  # what litellm 1.108.13 actually returns
     assert not demo.is_budget_error(200, body)
     assert not demo.is_budget_error(400, {"error": {"message": "bad request"}})
 

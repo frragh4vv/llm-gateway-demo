@@ -53,7 +53,7 @@ DEMO_TAG = "llm-gateway-demo"
 
 
 def is_budget_error(status_code: int, body: dict | str) -> bool:
-    """LiteLLM rejects over-budget keys/teams with a 4xx (422 in 1.106.x) and a budget message."""
+    """LiteLLM rejects over-budget keys/teams with a 4xx (422 in 1.108.x) and a budget message."""
     if status_code not in (400, 401, 403, 422, 429):
         return False
     text = body if isinstance(body, str) else str(body.get("error", body))
@@ -172,7 +172,7 @@ class GatewayDemo:
             res.real_calls[model] = deployment(r)
             self.log(f"  {model:<13} -> served by {deployment(r)} in {dt:.1f}s, cost ${cost:.6f}")
             self.log(f"                   \"{text[:140]}\"")
-        self.log(f"\n7) Real fallback: call {RETIRED_MODEL}, a model Google no longer serves")
+        self.log(f"\n7) Real fallback: call {RETIRED_MODEL}, a dead Gemini model ID")
         r = self.chat(key, RETIRED_MODEL, f"Say hi in five words. {uuid.uuid4().hex[:4]}", max_tokens=400)
         if r.status_code == 200:
             res.real_fallback_served_by = deployment(r)
@@ -239,7 +239,7 @@ class GatewayDemo:
         if real:
             self.run_real(platform, res)
 
-        self.log("\nDone. Open the dashboard to see spend, budgets, failures and recent requests.")
+        self.log("\nDone. Open the ops console to see spend, budgets, failures and recent requests.")
         return res
 
 

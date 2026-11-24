@@ -4,16 +4,16 @@ Starts, in one terminal:
   - embedded Postgres (pgserver, data in .data/pg)
   - mock LLM provider     http://localhost:8001
   - LiteLLM proxy         http://localhost:4000   (admin UI at /ui)
-  - ops dashboard         http://localhost:8501
+  - ops console           http://localhost:8080
 
-Creates .env from .env.example with random secrets on first run.
+Creates .env from .env.example (demo values, password 123) on first run.
 Ctrl+C stops everything.
 """
 
 from __future__ import annotations
 
 import os
-import secrets
+import socket
 import subprocess
 import sys
 import time
@@ -29,12 +29,10 @@ PY = sys.executable
 def ensure_env_file() -> None:
     if ENV_FILE.exists():
         return
+    # Demo build: keep the simple "123" values from .env.example so anyone can sign in.
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
-    text = text.replace("LITELLM_MASTER_KEY=sk-change-me", f"LITELLM_MASTER_KEY=sk-{secrets.token_urlsafe(24)}")
-    text = text.replace("LITELLM_SALT_KEY=change-me-too", f"LITELLM_SALT_KEY={secrets.token_urlsafe(32)}")
-    text = text.replace("POSTGRES_PASSWORD=change-me-db", f"POSTGRES_PASSWORD={secrets.token_urlsafe(16)}")
     ENV_FILE.write_text(text, encoding="utf-8")
-    print("Created .env with random secrets.")
+    print("Created .env with demo values (console password: 123).")
 
 
 def load_env() -> dict[str, str]:
@@ -48,11 +46,52 @@ def load_env() -> dict[str, str]:
     return env
 
 
+def recover_postgres(data: Path) -> None:
+    """Make sure the data dir is cleanly shut down before pgserver starts it.
+
+    On Windows, Ctrl+C reaches the Postgres processes too (exit 0xC000013A), so the next start
+    needs crash recovery. pgserver allows that only 10s and writes its server log inside the
+    data dir, where recovery's fsync pass trips over the open log file ("sharing violation")
+    and stalls. Here we stop any leftover server, then run recovery once with the log outside
+    the data dir and no short timeout, and shut down cleanly.
+    """
+    import pgserver
+
+    bin_dir = Path(pgserver.__file__).parent / "pginstall" / "bin"
+    exe = ".exe" if os.name == "nt" else ""
+    pg_ctl, controldata = str(bin_dir / f"pg_ctl{exe}"), str(bin_dir / f"pg_controldata{exe}")
+    if not (data / "PG_VERSION").exists():
+        return  # fresh data dir, pgserver will initdb it
+    run = lambda *a, **kw: subprocess.run(a, capture_output=True, text=True, **kw)  # noqa: E731
+
+    if run(pg_ctl, "-D", str(data), "status").returncode == 0:
+        print("  stopping a Postgres left running by an earlier run...")
+        run(pg_ctl, "-D", str(data), "-w", "-t", "120", "-m", "fast", "stop")
+
+    state = run(controldata, "-D", str(data)).stdout
+    if "Database cluster state:" in state and "shut down" not in state.split("Database cluster state:")[1].splitlines()[0]:
+        print("  Postgres was not shut down cleanly; running recovery (can take a minute)...")
+        (data / "postmaster.pid").unlink(missing_ok=True)
+        log = ROOT / "logs" / "pg-recovery.log"
+        log.parent.mkdir(exist_ok=True)
+        with socket.socket() as s:  # Postgres rejects port 0, so pick a free one
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        # No pipes here: Postgres inherits them, so capture_output would wait until it exits.
+        started = subprocess.run(
+            [pg_ctl, "-D", str(data), "-w", "-t", "300", "-o", f"-h 127.0.0.1 -p {port}", "-l", str(log), "start"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if started.returncode != 0:
+            raise SystemExit(f"Postgres recovery failed, see {log}")
+        run(pg_ctl, "-D", str(data), "-w", "-t", "120", "-m", "fast", "stop")
+
+
 def start_postgres() -> tuple[object, str]:
     import pgserver  # embedded Postgres binaries, no system install needed
 
     data = ROOT / ".data" / "pg"
     data.mkdir(parents=True, exist_ok=True)
+    recover_postgres(data)
     server = pgserver.get_server(str(data), cleanup_mode="stop")
     server.psql("SELECT 1;")
     return server, server.get_uri()
@@ -114,14 +153,12 @@ def main() -> int:
         wait_http("http://localhost:8001/health", "mock", procs[-1])
         spawn("proxy", [PY, "-m", "litellm.proxy.proxy_cli",
                         "--config", "gateway/config.local.yaml", "--port", "4000"])
-        spawn("dashboard", [PY, "-m", "streamlit", "run", "dashboard/app.py",
-                            "--server.headless", "true", "--server.port", "8501",
-                            "--browser.gatherUsageStats", "false"])
-        wait_http("http://localhost:8501", "dashboard", procs[-1])
+        spawn("console", [PY, "-m", "uvicorn", "console.server:app", "--port", "8080"])
+        wait_http("http://localhost:8080", "console", procs[-1])
         print("  proxy starting (first run migrates the DB, can take a minute)...")
         wait_http("http://localhost:4000/health/liveliness", "proxy", procs[1], timeout_s=300)
         print("\nAll up. Now run:  python scripts/demo.py")
-        print("Dashboard: http://localhost:8501   LiteLLM admin UI: http://localhost:4000/ui")
+        print("Ops console: http://localhost:8080 (sign in with password 123)")
         print("Ctrl+C to stop.")
         while all(p.poll() is None for p in procs):
             time.sleep(1)

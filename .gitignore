@@ -5,3 +5,6 @@ logs/
 __pycache__/
 *.pyc
 .pytest_cache/
+.taste-skill/
+IMPROVEMENT_REPORT.md
+docs/hosting-*.html
